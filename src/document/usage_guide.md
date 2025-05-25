@@ -1,4 +1,4 @@
-# 🎮 DawnCraft サーバ利用ガイド
+# 🎮 DawnCraft on EC2 サーバ利用ガイド
 
 ## 🌟 **サーバについて**
 
