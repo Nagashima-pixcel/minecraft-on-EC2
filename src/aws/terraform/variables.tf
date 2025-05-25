@@ -32,3 +32,13 @@ variable "dns_name" {
   description = "DNS name"
   type        = string
 }
+
+variable "server_file_key" {
+  description = "Server file key"
+  type        = string
+}
+
+variable "s3_bucket_name" {
+  description = "S3 bucket name"
+  type        = string
+}
