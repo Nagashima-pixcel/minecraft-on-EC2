@@ -1,6 +1,11 @@
-# Lambda用IAMロール
-resource "aws_iam_role" "lambda_route53_role" {
-  name = "lambda-route53-updater-role"
+# =============================================================================
+# Minecraft Server Auto Management Lambda Function
+# EC2自動起動・Route53 DNS更新・監視システム統合
+# =============================================================================
+
+# Minecraft自動管理用IAMロール
+resource "aws_iam_role" "minecraft_auto_manager_role" {
+  name = "minecraft-auto-manager-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -14,12 +19,16 @@ resource "aws_iam_role" "lambda_route53_role" {
       }
     ]
   })
+
+  tags = {
+    Name = "minecraft-auto-manager"
+  }
 }
 
-# Lambda用IAMポリシー
-resource "aws_iam_policy" "lambda_route53_policy" {
-  name        = "lambda-route53-updater-policy"
-  description = "Policy for Lambda to update Route53 records and manage EC2"
+# Minecraft自動管理用IAMポリシー
+resource "aws_iam_policy" "minecraft_auto_manager_policy" {
+  name        = "minecraft-auto-manager-policy"
+  description = "Policy for Minecraft server auto management (EC2, Route53, EventBridge)"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -37,7 +46,8 @@ resource "aws_iam_policy" "lambda_route53_policy" {
         Effect = "Allow"
         Action = [
           "ec2:StartInstances",
-          "ec2:DescribeInstances"
+          "ec2:DescribeInstances",
+          "events:DescribeRule"
         ]
         Resource = "*"
       },
@@ -51,49 +61,54 @@ resource "aws_iam_policy" "lambda_route53_policy" {
       }
     ]
   })
+
+  tags = {
+    Name = "minecraft-auto-manager"
+  }
 }
 
 # IAMポリシーをロールにアタッチ
-resource "aws_iam_role_policy_attachment" "lambda_route53_policy_attachment" {
-  role       = aws_iam_role.lambda_route53_role.name
-  policy_arn = aws_iam_policy.lambda_route53_policy.arn
+resource "aws_iam_role_policy_attachment" "minecraft_auto_manager_policy_attachment" {
+  role       = aws_iam_role.minecraft_auto_manager_role.name
+  policy_arn = aws_iam_policy.minecraft_auto_manager_policy.arn
 }
 
-# Lambda関数用のZIPファイル
-data "archive_file" "lambda_zip" {
+# Minecraft自動管理Lambda関数用ZIPファイル
+data "archive_file" "minecraft_auto_manager_zip" {
   type        = "zip"
-  source_file = "${path.module}/../lambda/update_route53_record.py"
-  output_path = "${path.module}/../lambda/update_route53_record.zip"
+  source_file = "${path.module}/../lambda/minecraft_auto_manager.py"
+  output_path = "${path.module}/../lambda/minecraft_auto_manager.zip"
 }
 
-# Lambda関数
-resource "aws_lambda_function" "route53_updater" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "minecraft-route53-updater"
-  role            = aws_iam_role.lambda_route53_role.arn
-  handler         = "update_route53_record.lambda_handler"
+# Minecraft自動管理Lambda関数
+resource "aws_lambda_function" "minecraft_auto_manager" {
+  filename         = data.archive_file.minecraft_auto_manager_zip.output_path
+  function_name    = "minecraft-auto-manager"
+  role            = aws_iam_role.minecraft_auto_manager_role.arn
+  handler         = "minecraft_auto_manager.lambda_handler"
   runtime         = "python3.12"
   timeout         = 300
   memory_size     = 256
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  source_code_hash = data.archive_file.minecraft_auto_manager_zip.output_base64sha256
 
   environment {
     variables = {
-      INSTANCE_ID     = var.instance_id
-      HOSTED_ZONE_ID  = var.hosted_zone_id
-      DNS_NAME        = var.dns_name
+      INSTANCE_ID          = var.instance_id
+      HOSTED_ZONE_ID       = var.hosted_zone_id
+      DNS_NAME            = var.dns_name
+      MINECRAFT_AWS_REGION = var.aws_region
     }
   }
 
   tags = {
-    Name = "minecraft-route53-updater"
+    Name = "minecraft-auto-manager"
   }
 }
 
 # EventBridgeルール（EC2起動時にLambdaをトリガー）
 resource "aws_cloudwatch_event_rule" "ec2_start_rule" {
   name        = "minecraft-ec2-start-rule"
-  description = "Trigger Lambda when Minecraft EC2 instance starts"
+  description = "Trigger auto manager when Minecraft EC2 instance starts"
 
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
@@ -103,20 +118,24 @@ resource "aws_cloudwatch_event_rule" "ec2_start_rule" {
       instance-id = [var.instance_id]
     }
   })
+
+  tags = {
+    Name = "minecraft-ec2-start-rule"
+  }
 }
 
-# EventBridgeターゲット（Lambdaを呼び出し）
-resource "aws_cloudwatch_event_target" "lambda_target" {
+# EventBridgeターゲット（自動管理Lambdaを呼び出し）
+resource "aws_cloudwatch_event_target" "minecraft_auto_manager_target" {
   rule      = aws_cloudwatch_event_rule.ec2_start_rule.name
-  target_id = "TriggerLambdaFunction"
-  arn       = aws_lambda_function.route53_updater.arn
+  target_id = "TriggerMinecraftAutoManager"
+  arn       = aws_lambda_function.minecraft_auto_manager.arn
 }
 
 # LambdaがEventBridgeから呼び出されることを許可
-resource "aws_lambda_permission" "allow_eventbridge" {
+resource "aws_lambda_permission" "allow_eventbridge_auto_manager" {
   statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.route53_updater.function_name
+  function_name = aws_lambda_function.minecraft_auto_manager.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.ec2_start_rule.arn
 } 
